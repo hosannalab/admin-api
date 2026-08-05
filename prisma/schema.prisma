@@ -1,0 +1,297 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StockMovementType {
+  IN
+  OUT
+}
+
+enum StockMovementReason {
+  INITIAL
+  PURCHASE
+  CUSTOMER_RETURN
+  POSITIVE_ADJUSTMENT
+  SALE
+  SUPPLIER_RETURN
+  DAMAGE
+  NEGATIVE_ADJUSTMENT
+}
+
+model Company {
+  id          String           @id @default(cuid())
+  externalId  String?          @unique
+  name        String
+  slug        String           @unique
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  memberships CompanyUser[]
+  roles       Role[]
+  categories  Category[]
+  sports      Sport[]
+  brands      Brand[]
+  sizes       Size[]
+  types       ProductType[]
+  models      ProductModel[]
+  products    Product[]
+  variants    ProductVariant[]
+  userRoles   UserRole[]
+  stockMovements StockMovement[]
+}
+
+model User {
+  id           String        @id @default(cuid())
+  firstName    String?
+  lastName     String?
+  email        String        @unique
+  passwordHash String
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  memberships  CompanyUser[]
+  userRoles    UserRole[]
+  stockMovements StockMovement[]
+}
+
+model CompanyUser {
+  id        String   @id @default(cuid())
+  companyId String
+  userId    String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+}
+
+model Role {
+  id            String           @id @default(cuid())
+  companyId     String
+  name          String
+  description   String?
+  isSystem      Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  company       Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rolePerms     RolePermission[]
+  assignedUsers UserRole[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  rolePerms   RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model UserRole {
+  userId    String
+  roleId    String
+  companyId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId, companyId])
+  @@index([roleId])
+  @@index([companyId])
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Sport {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Brand {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Size {
+  id        String           @id @default(cuid())
+  companyId String
+  name      String
+  sortOrder Int              @default(0)
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  variants  ProductVariant[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model ProductType {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model ProductModel {
+  id        String    @id @default(cuid())
+  companyId String
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Product {
+  id             String           @id @default(cuid())
+  companyId      String
+  reference      String
+  name           String
+  description    String?
+  categoryId     String
+  sportId        String?
+  brandId        String
+  productTypeId  String?
+  productModelId String?
+  imageUrl       String?
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  company        Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category       Category         @relation(fields: [categoryId], references: [id])
+  sport          Sport?           @relation(fields: [sportId], references: [id])
+  brand          Brand            @relation(fields: [brandId], references: [id])
+  productType    ProductType?     @relation(fields: [productTypeId], references: [id])
+  productModel   ProductModel?    @relation(fields: [productModelId], references: [id])
+  variants       ProductVariant[]
+
+  @@unique([companyId, reference])
+  @@index([companyId])
+  @@index([categoryId])
+  @@index([sportId])
+  @@index([brandId])
+  @@index([productTypeId])
+  @@index([productModelId])
+}
+
+model ProductVariant {
+  id        String        @id @default(cuid())
+  companyId String
+  productId String
+  sizeId    String
+  itemNo    String?
+  sku       String?
+  salePrice Decimal       @db.Decimal(10, 2)
+  stock     Int           @default(0)
+  status    ProductStatus @default(ACTIVE)
+  imageUrl  String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size      Size             @relation(fields: [sizeId], references: [id])
+  movements StockMovement[]
+
+  @@unique([companyId, productId, sizeId])
+  @@unique([companyId, itemNo])
+  @@index([companyId])
+  @@index([productId])
+  @@index([sizeId])
+}
+
+model StockMovement {
+  id          String              @id @default(cuid())
+  companyId   String
+  variantId   String
+  type        StockMovementType
+  reason      StockMovementReason
+  quantity    Int
+  stockBefore Int
+  stockAfter  Int
+  note        String?
+  reference   String?
+  createdById String
+  createdAt   DateTime            @default(now())
+
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy User           @relation(fields: [createdById], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([variantId, createdAt])
+  @@index([companyId, type])
+}

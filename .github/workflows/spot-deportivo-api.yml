@@ -1,0 +1,195 @@
+name: Spot Deportivo API CI/CD
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: spot-deportivo-api-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  IMAGE_REPOSITORY: spot-deportivo-api
+  WORKING_DIRECTORY: .
+
+jobs:
+  ci:
+    name: CI - Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run prisma:generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/spot_deportivo?schema=public' }}
+
+      - name: Typecheck & build (smoke)
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run build
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/spot_deportivo?schema=public' }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES_IN: ${{ vars.JWT_EXPIRES_IN }}
+          PUBLIC_API_KEY: ${{ secrets.PUBLIC_API_KEY }}
+          PORT: ${{ vars.PORT }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_PUBLIC_URL: ${{ vars.S3_PUBLIC_URL }}
+
+      - name: Generate image tag
+        id: meta
+        run: echo "tag=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+  build-prod:
+    name: Build & Push PROD Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: ci
+    if: github.ref == 'refs/heads/master'
+    environment: PROD
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run prisma:generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/spot_deportivo?schema=public' }}
+
+      - name: Build
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run build
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/spot_deportivo?schema=public' }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES_IN: ${{ vars.JWT_EXPIRES_IN }}
+          PUBLIC_API_KEY: ${{ secrets.PUBLIC_API_KEY }}
+          PORT: ${{ vars.PORT }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_PUBLIC_URL: ${{ vars.S3_PUBLIC_URL }}
+
+      - name: Verify dist
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: ls -la dist
+
+      - name: Login DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPOSITORY }}:prod-${{ needs.ci.outputs.image_tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPOSITORY }}:prod-latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPOSITORY }}:latest
+
+  deploy-prod:
+    name: Deploy PROD
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - ci
+      - build-prod
+    if: github.ref == 'refs/heads/master'
+    environment: PROD
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script: |
+            set -e
+
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_REPOSITORY }}:prod-${{ needs.ci.outputs.image_tag }}"
+            TRAEFIK_HOST="${{ vars.TRAEFIK_API_HOST }}"
+            if [ -z "$TRAEFIK_HOST" ]; then TRAEFIK_HOST="api.spotdeportivo.hosannalab.com"; fi
+            PORT_VALUE="${{ vars.PORT }}"
+            if [ -z "$PORT_VALUE" ]; then PORT_VALUE="3000"; fi
+            JWT_EXPIRES_IN_VALUE="${{ vars.JWT_EXPIRES_IN }}"
+            if [ -z "$JWT_EXPIRES_IN_VALUE" ]; then JWT_EXPIRES_IN_VALUE="1d"; fi
+            S3_BUCKET_VALUE="${{ vars.S3_BUCKET }}"
+            if [ -z "$S3_BUCKET_VALUE" ]; then S3_BUCKET_VALUE="spot-deportivo"; fi
+            S3_REGION_VALUE="${{ vars.S3_REGION }}"
+            if [ -z "$S3_REGION_VALUE" ]; then S3_REGION_VALUE="us-east-1"; fi
+            S3_PUBLIC_URL_VALUE="${{ vars.S3_PUBLIC_URL }}"
+            if [ -z "$S3_PUBLIC_URL_VALUE" ]; then S3_PUBLIC_URL_VALUE="http://127.0.0.1:9000/$S3_BUCKET_VALUE"; fi
+
+            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+            docker network inspect proxy >/dev/null 2>&1 || docker network create proxy
+            docker pull "$IMAGE"
+            docker rm -f spot-deportivo-api-prod || true
+
+            docker run -d \
+              --name spot-deportivo-api-prod \
+              --restart unless-stopped \
+              --network proxy \
+              -e NODE_ENV=production \
+              -e PORT="$PORT_VALUE" \
+              -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+              -e JWT_SECRET='${{ secrets.JWT_SECRET }}' \
+              -e JWT_EXPIRES_IN="$JWT_EXPIRES_IN_VALUE" \
+              -e PUBLIC_API_KEY='${{ secrets.PUBLIC_API_KEY }}' \
+              -e S3_ENDPOINT='${{ vars.S3_ENDPOINT }}' \
+              -e S3_ACCESS_KEY='${{ secrets.S3_ACCESS_KEY }}' \
+              -e S3_SECRET_KEY='${{ secrets.S3_SECRET_KEY }}' \
+              -e S3_BUCKET="$S3_BUCKET_VALUE" \
+              -e S3_REGION="$S3_REGION_VALUE" \
+              -e S3_PUBLIC_URL="$S3_PUBLIC_URL_VALUE" \
+              -l traefik.enable=true \
+              -l "traefik.http.routers.spot-deportivo-api-prod.rule=Host(\`$TRAEFIK_HOST\`)" \
+              -l traefik.http.routers.spot-deportivo-api-prod.entrypoints=websecure \
+              -l traefik.http.routers.spot-deportivo-api-prod.tls.certresolver=letsencrypt \
+              -l traefik.http.services.spot-deportivo-api-prod.loadbalancer.server.port=3000 \
+              "$IMAGE"
+
+            docker image prune -af || true
