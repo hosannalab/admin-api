@@ -231,6 +231,10 @@ export class InventoryService {
       throw new NotFoundException('Company not found for external id');
     }
 
+    if (query.groupByStyle) {
+      return this.listPublicProductsByStyle(company, query);
+    }
+
     if (query.groupByProduct) {
       return this.listPublicProductsGrouped(company, query);
     }
@@ -369,6 +373,213 @@ export class InventoryService {
           status: variant.status,
         })),
       })),
+    };
+  }
+
+  private buildStyleKey(product: {
+    categoryId: string;
+    brandId: string;
+    productModelId: string | null;
+    reference: string;
+  }) {
+    if (product.productModelId) {
+      return `${product.categoryId}:${product.brandId}:${product.productModelId}`;
+    }
+
+    const baseReference = product.reference.includes('|')
+      ? product.reference.split('|')[0]
+      : product.reference;
+
+    return `${product.categoryId}:${product.brandId}:ref:${baseReference}`;
+  }
+
+  private buildStyleTitle(
+    brand: string,
+    model: string | null,
+    reference: string,
+  ) {
+    if (model) {
+      return `${brand} ${model}`.trim();
+    }
+
+    const baseReference = reference.includes('|')
+      ? reference.split('|')[0]
+      : reference;
+
+    return `${brand} ${baseReference}`.trim();
+  }
+
+  private async listPublicProductsByStyle(
+    company: { id: string; externalId: string | null; name: string; slug: string },
+    query: ListPublicProductsQueryDto,
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+    const sortBy = query.sortBy ?? 'createdAt';
+    const sortOrder: Prisma.SortOrder = query.sortOrder ?? 'desc';
+    const variantWhere = this.buildPublicVariantWhere(company.id, query);
+
+    const matchingVariants = await this.prisma.productVariant.findMany({
+      where: variantWhere,
+      select: { productId: true },
+      distinct: ['productId'],
+    });
+
+    const productIds = matchingVariants.map((entry) => entry.productId);
+
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds.length ? productIds : ['__none__'] },
+        companyId: company.id,
+        isActive: true,
+      },
+      include: {
+        category: true,
+        brand: true,
+        productModel: true,
+        productType: true,
+        variants: {
+          where: variantWhere,
+          include: { size: true },
+          orderBy: [{ size: { sortOrder: 'asc' } }, { size: { name: 'asc' } }],
+        },
+      },
+    });
+
+    type StyleAccumulator = {
+      styleKey: string;
+      styleTitle: string;
+      category: string;
+      categorySlug: string;
+      brand: string;
+      model: string | null;
+      defaultProductId: string;
+      imageUrl: string | null;
+      productIds: Set<string>;
+      sizes: Set<string>;
+      prices: number[];
+      hasStock: boolean;
+      latestCreatedAt: Date;
+      minPriceValue: number | null;
+    };
+
+    const styleMap = new Map<string, StyleAccumulator>();
+
+    for (const product of products) {
+      if (!product.variants.length) continue;
+
+      const styleKey = this.buildStyleKey(product);
+      let acc = styleMap.get(styleKey);
+
+      if (!acc) {
+        acc = {
+          styleKey,
+          styleTitle: this.buildStyleTitle(
+            product.brand.name,
+            product.productModel?.name ?? null,
+            product.reference,
+          ),
+          category: product.category.name,
+          categorySlug: product.category.name,
+          brand: product.brand.name,
+          model: product.productModel?.name ?? null,
+          defaultProductId: product.id,
+          imageUrl: product.imageUrl,
+          productIds: new Set(),
+          sizes: new Set(),
+          prices: [],
+          hasStock: false,
+          latestCreatedAt: product.createdAt,
+          minPriceValue: null,
+        };
+        styleMap.set(styleKey, acc);
+      }
+
+      acc.productIds.add(product.id);
+      if (!acc.imageUrl && product.imageUrl) {
+        acc.imageUrl = product.imageUrl;
+      }
+      if (product.createdAt > acc.latestCreatedAt) {
+        acc.latestCreatedAt = product.createdAt;
+      }
+
+      for (const variant of product.variants) {
+        acc.sizes.add(variant.size.name);
+        const price = Number(variant.salePrice);
+        if (price > 0) {
+          acc.prices.push(price);
+          acc.minPriceValue =
+            acc.minPriceValue === null
+              ? price
+              : Math.min(acc.minPriceValue, price);
+        }
+        if (variant.stock > 0) {
+          acc.hasStock = true;
+        }
+      }
+    }
+
+    let styles = Array.from(styleMap.values()).map((acc) => ({
+      styleKey: acc.styleKey,
+      styleTitle: acc.styleTitle,
+      category: acc.category,
+      categorySlug: acc.categorySlug,
+      brand: acc.brand,
+      model: acc.model,
+      defaultProductId: acc.defaultProductId,
+      imageUrl: acc.imageUrl,
+      colorCount: acc.productIds.size,
+      sizeCount: acc.sizes.size,
+      minPrice: acc.prices.length ? Math.min(...acc.prices) : 0,
+      maxPrice: acc.prices.length ? Math.max(...acc.prices) : 0,
+      hasStock: acc.hasStock,
+      latestCreatedAt: acc.latestCreatedAt,
+      minPriceValue: acc.minPriceValue,
+    }));
+
+    styles.sort((a, b) => {
+      switch (sortBy) {
+        case 'productName':
+          return sortOrder === 'asc'
+            ? a.styleTitle.localeCompare(b.styleTitle)
+            : b.styleTitle.localeCompare(a.styleTitle);
+        case 'brand':
+          return sortOrder === 'asc'
+            ? a.brand.localeCompare(b.brand)
+            : b.brand.localeCompare(a.brand);
+        case 'model':
+          return sortOrder === 'asc'
+            ? (a.model ?? '').localeCompare(b.model ?? '')
+            : (b.model ?? '').localeCompare(a.model ?? '');
+        case 'category':
+          return sortOrder === 'asc'
+            ? a.category.localeCompare(b.category)
+            : b.category.localeCompare(a.category);
+        case 'salePrice':
+          return sortOrder === 'asc'
+            ? (a.minPriceValue ?? 0) - (b.minPriceValue ?? 0)
+            : (b.minPriceValue ?? 0) - (a.minPriceValue ?? 0);
+        case 'createdAt':
+        default:
+          return sortOrder === 'asc'
+            ? a.latestCreatedAt.getTime() - b.latestCreatedAt.getTime()
+            : b.latestCreatedAt.getTime() - a.latestCreatedAt.getTime();
+      }
+    });
+
+    const total = styles.length;
+    const items = styles.slice(skip, skip + pageSize).map(
+      ({ latestCreatedAt, minPriceValue, ...item }) => item,
+    );
+
+    return {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+      company,
+      items,
     };
   }
 
@@ -525,13 +736,16 @@ export class InventoryService {
       throw new NotFoundException('Product has no active variants');
     }
 
-    const styleTitle = anchorProduct.productModel
-      ? `${anchorProduct.brand.name} ${anchorProduct.productModel.name}`.trim()
-      : anchorProduct.name;
+    const styleTitle = this.buildStyleTitle(
+      anchorProduct.brand.name,
+      anchorProduct.productModel?.name ?? null,
+      anchorProduct.reference,
+    );
 
     return {
       company,
       productId: anchorProduct.id,
+      styleKey: this.buildStyleKey(anchorProduct),
       styleTitle,
       category: anchorProduct.category.name,
       categorySlug: anchorProduct.category.name,
@@ -590,7 +804,7 @@ export class InventoryService {
       return product.reference.slice(pipeIndex + 1);
     }
 
-    return product.name;
+    return 'Estándar';
   }
 
   private mapPublicColorProduct(product: {
@@ -612,7 +826,6 @@ export class InventoryService {
   }) {
     return {
       productId: product.id,
-      name: product.name,
       color: this.extractColorLabel(product),
       reference: product.reference,
       imageUrl: product.imageUrl,

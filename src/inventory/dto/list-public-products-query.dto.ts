@@ -78,6 +78,11 @@ export class ListPublicProductsQueryDto {
   groupByProduct?: boolean;
 
   @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  groupByStyle?: boolean;
+
+  @IsOptional()
   @IsIn([
     'createdAt',
     'salePrice',
