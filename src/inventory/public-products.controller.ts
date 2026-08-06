@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Param,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,21 @@ export class PublicProductsController {
     }
 
     return this.inventoryService.listPublicProducts(companyExternalId, query);
+  }
+
+  @Get('products/:productId/style')
+  getProductStyle(
+    @Headers('x-company-external-id') companyExternalId: string | undefined,
+    @Param('productId') productId: string,
+  ) {
+    if (!companyExternalId) {
+      throw new BadRequestException('x-company-external-id header is required');
+    }
+
+    return this.inventoryService.getPublicProductStyleDetail(
+      companyExternalId,
+      productId,
+    );
   }
 
   @Get('categories')

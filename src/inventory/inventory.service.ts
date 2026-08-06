@@ -475,6 +475,160 @@ export class InventoryService {
     };
   }
 
+  async getPublicProductStyleDetail(
+    companyExternalId: string,
+    productId: string,
+  ) {
+    const company = await this.prisma.company.findFirst({
+      where: { externalId: companyExternalId, isActive: true },
+      select: { id: true, externalId: true, name: true, slug: true },
+    });
+
+    if (!company) {
+      throw new NotFoundException('Company not found for external id');
+    }
+
+    const anchorProduct = await this.prisma.product.findFirst({
+      where: { id: productId, companyId: company.id, isActive: true },
+      include: {
+        category: true,
+        brand: true,
+        productType: true,
+        productModel: true,
+      },
+    });
+
+    if (!anchorProduct) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const siblingWhere = this.buildStyleSiblingWhere(company.id, anchorProduct);
+
+    const siblingProducts = await this.prisma.product.findMany({
+      where: siblingWhere,
+      orderBy: [{ productType: { name: 'asc' } }, { name: 'asc' }],
+      include: {
+        productType: true,
+        variants: {
+          where: { status: ProductStatus.ACTIVE },
+          include: { size: true },
+          orderBy: [{ size: { sortOrder: 'asc' } }, { size: { name: 'asc' } }],
+        },
+      },
+    });
+
+    const colors = siblingProducts
+      .filter((product) => product.variants.length > 0)
+      .map((product) => this.mapPublicColorProduct(product));
+
+    if (!colors.length) {
+      throw new NotFoundException('Product has no active variants');
+    }
+
+    const styleTitle = anchorProduct.productModel
+      ? `${anchorProduct.brand.name} ${anchorProduct.productModel.name}`.trim()
+      : anchorProduct.name;
+
+    return {
+      company,
+      productId: anchorProduct.id,
+      styleTitle,
+      category: anchorProduct.category.name,
+      categorySlug: anchorProduct.category.name,
+      brand: anchorProduct.brand.name,
+      model: anchorProduct.productModel?.name ?? null,
+      colors,
+    };
+  }
+
+  private buildStyleSiblingWhere(
+    companyId: string,
+    product: {
+      categoryId: string;
+      brandId: string;
+      productModelId: string | null;
+      reference: string;
+    },
+  ): Prisma.ProductWhereInput {
+    if (product.productModelId) {
+      return {
+        companyId,
+        categoryId: product.categoryId,
+        brandId: product.brandId,
+        productModelId: product.productModelId,
+        isActive: true,
+      };
+    }
+
+    const baseReference = product.reference.includes('|')
+      ? product.reference.split('|')[0]
+      : product.reference;
+
+    return {
+      companyId,
+      categoryId: product.categoryId,
+      brandId: product.brandId,
+      isActive: true,
+      OR: [
+        { reference: baseReference },
+        { reference: { startsWith: `${baseReference}|` } },
+      ],
+    };
+  }
+
+  private extractColorLabel(
+    product: {
+      name: string;
+      reference: string;
+      productType: { name: string } | null;
+    },
+  ) {
+    if (product.productType?.name) return product.productType.name;
+
+    const pipeIndex = product.reference.indexOf('|');
+    if (pipeIndex >= 0) {
+      return product.reference.slice(pipeIndex + 1);
+    }
+
+    return product.name;
+  }
+
+  private mapPublicColorProduct(product: {
+    id: string;
+    name: string;
+    reference: string;
+    imageUrl: string | null;
+    productType: { name: string } | null;
+    variants: {
+      id: string;
+      itemNo: string | null;
+      sku: string | null;
+      salePrice: Prisma.Decimal;
+      stock: number;
+      imageUrl: string | null;
+      status: ProductStatus;
+      size: { name: string };
+    }[];
+  }) {
+    return {
+      productId: product.id,
+      name: product.name,
+      color: this.extractColorLabel(product),
+      reference: product.reference,
+      imageUrl: product.imageUrl,
+      variants: product.variants.map((variant) => ({
+        id: variant.id,
+        size: variant.size.name,
+        itemNo: variant.itemNo,
+        sku: variant.sku,
+        salePrice: Number(variant.salePrice),
+        stock: variant.stock,
+        imageUrl: variant.imageUrl || product.imageUrl,
+        status: variant.status,
+      })),
+    };
+  }
+
   async getCatalogs(companyId: string) {
     const [categories, sports, brands, types, models, sizes] =
       await this.prisma.$transaction([
