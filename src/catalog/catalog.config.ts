@@ -24,10 +24,10 @@ export const CATALOG_RESOURCES = {
     label: 'Deporte',
     orderBy: { name: 'asc' },
   },
-  'product-types': {
-    path: 'product-types',
-    model: 'productType',
-    label: 'Tipo de producto',
+  colors: {
+    path: 'colors',
+    model: 'color',
+    label: 'Color',
     orderBy: { name: 'asc' },
   },
   'product-models': {

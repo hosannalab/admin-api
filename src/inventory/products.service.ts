@@ -23,10 +23,9 @@ export class ProductsService {
     category: true,
     sport: true,
     brand: true,
-    productType: true,
     productModel: true,
     variants: {
-      include: { size: true },
+      include: { size: true, color: true },
       orderBy: { createdAt: 'asc' as const },
     },
   };
@@ -78,7 +77,9 @@ export class ProductsService {
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(query.brandId ? { brandId: query.brandId } : {}),
       ...(query.sportId ? { sportId: query.sportId } : {}),
-      ...(query.productTypeId ? { productTypeId: query.productTypeId } : {}),
+      ...(query.colorId
+        ? { variants: { some: { colorId: query.colorId } } }
+        : {}),
       ...(query.productModelId ? { productModelId: query.productModelId } : {}),
       ...(query.search
         ? {
@@ -151,7 +152,6 @@ export class ProductsService {
           categoryId: dto.categoryId,
           sportId: dto.sportId || null,
           brandId: dto.brandId,
-          productTypeId: dto.productTypeId || null,
           productModelId: dto.productModelId || null,
           imageUrl: dto.imageUrl,
         },
@@ -159,15 +159,21 @@ export class ProductsService {
       });
 
       if (dto.sizeId) {
-        if (dto.salePrice === undefined || dto.stock === undefined) {
+        if (
+          !dto.colorId ||
+          !dto.itemNo?.trim() ||
+          dto.salePrice === undefined ||
+          dto.stock === undefined
+        ) {
           throw new BadRequestException(
-            'salePrice and stock are required when creating a variant',
+            'colorId, itemNo, salePrice and stock are required when creating a variant',
           );
         }
 
         await this.createVariantForProduct(companyId, userId, product.id, {
+          colorId: dto.colorId,
           sizeId: dto.sizeId,
-          itemNo: dto.itemNo,
+          itemNo: dto.itemNo.trim(),
           sku: dto.sku,
           salePrice: dto.salePrice,
           stock: dto.stock,
@@ -201,7 +207,6 @@ export class ProductsService {
       categoryId: dto.categoryId ?? existing.categoryId,
       brandId: dto.brandId ?? existing.brandId,
       sportId: dto.sportId ?? existing.sportId ?? undefined,
-      productTypeId: dto.productTypeId ?? existing.productTypeId ?? undefined,
       productModelId: dto.productModelId ?? existing.productModelId ?? undefined,
     });
 
@@ -215,9 +220,6 @@ export class ProductsService {
           ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
           ...(dto.brandId !== undefined ? { brandId: dto.brandId } : {}),
           ...(dto.sportId !== undefined ? { sportId: dto.sportId || null } : {}),
-          ...(dto.productTypeId !== undefined
-            ? { productTypeId: dto.productTypeId || null }
-            : {}),
           ...(dto.productModelId !== undefined
             ? { productModelId: dto.productModelId || null }
             : {}),
@@ -269,12 +271,22 @@ export class ProductsService {
       throw new NotFoundException('Product not found');
     }
 
-    const size = await this.prisma.size.findFirst({
-      where: { id: dto.sizeId, companyId, isActive: true },
-    });
+    const [size, color] = await Promise.all([
+      this.prisma.size.findFirst({
+        where: { id: dto.sizeId, companyId, isActive: true },
+      }),
+      this.prisma.color.findFirst({
+        where: { id: dto.colorId, companyId, isActive: true },
+      }),
+    ]);
 
-    if (!size) {
-      throw new BadRequestException('Invalid size for this company');
+    if (!size || !color) {
+      throw new BadRequestException('Invalid size or color for this company');
+    }
+
+    const itemNo = dto.itemNo?.trim();
+    if (!itemNo) {
+      throw new BadRequestException('itemNo is required when creating a variant');
     }
 
     try {
@@ -282,9 +294,10 @@ export class ProductsService {
         data: {
           companyId,
           productId,
+          colorId: dto.colorId,
           sizeId: dto.sizeId,
-          itemNo: dto.itemNo,
-          sku: dto.sku,
+          itemNo,
+          sku: dto.sku?.trim() || itemNo,
           salePrice: dto.salePrice,
           stock: 0,
           status: dto.status ?? ProductStatus.ACTIVE,
@@ -332,6 +345,7 @@ export class ProductsService {
       },
       include: {
         size: true,
+        color: true,
         product: true,
       },
     });
@@ -366,7 +380,7 @@ export class ProductsService {
     const updated = await this.prisma.productVariant.update({
       where: { id },
       data: { status },
-      include: { size: true, product: true },
+      include: { size: true, color: true, product: true },
     });
 
     return {
@@ -381,7 +395,6 @@ export class ProductsService {
       categoryId: string;
       brandId: string;
       sportId?: string;
-      productTypeId?: string;
       productModelId?: string;
     },
   ) {
@@ -402,11 +415,6 @@ export class ProductsService {
       dto.sportId
         ? this.prisma.sport.findFirst({
             where: { id: dto.sportId, companyId, isActive: true },
-          })
-        : Promise.resolve(true),
-      dto.productTypeId
-        ? this.prisma.productType.findFirst({
-            where: { id: dto.productTypeId, companyId, isActive: true },
           })
         : Promise.resolve(true),
       dto.productModelId

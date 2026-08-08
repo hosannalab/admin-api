@@ -39,10 +39,6 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsString()
-  productTypeId?: string;
-
-  @IsOptional()
-  @IsString()
   productModelId?: string;
 
   @IsOptional()
@@ -54,8 +50,13 @@ export class CreateProductDto {
   sizeId?: string;
 
   @ValidateIf((dto) => Boolean(dto.sizeId))
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  colorId?: string;
+
+  @ValidateIf((dto) => Boolean(dto.sizeId))
+  @IsString()
+  @IsNotEmpty()
   itemNo?: string;
 
   @ValidateIf((dto) => Boolean(dto.sizeId))

@@ -33,7 +33,7 @@ export class ListProductsQueryDto {
 
   @IsOptional()
   @IsString()
-  productTypeId?: string;
+  colorId?: string;
 
   @IsOptional()
   @IsString()

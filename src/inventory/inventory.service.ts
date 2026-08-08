@@ -254,12 +254,12 @@ export class InventoryService {
         orderBy: this.buildPublicOrderBy(sortBy, sortOrder),
         include: {
           size: true,
+          color: true,
           product: {
             include: {
               category: true,
               sport: true,
               brand: true,
-              productType: true,
               productModel: true,
             },
           },
@@ -284,7 +284,7 @@ export class InventoryService {
         categorySlug: item.product.category.name,
         sport: item.product.sport?.name ?? null,
         brand: item.product.brand.name,
-        type: item.product.productType?.name ?? null,
+        color: item.color.name,
         model: item.product.productModel?.name ?? null,
         size: item.size.name,
         itemNo: item.itemNo,
@@ -332,12 +332,15 @@ export class InventoryService {
         include: {
           category: true,
           brand: true,
-          productType: true,
           productModel: true,
           variants: {
             where: variantWhere,
-            include: { size: true },
-            orderBy: [{ size: { sortOrder: 'asc' } }, { size: { name: 'asc' } }],
+            include: { size: true, color: true },
+            orderBy: [
+              { color: { name: 'asc' } },
+              { size: { sortOrder: 'asc' } },
+              { size: { name: 'asc' } },
+            ],
           },
         },
       }),
@@ -350,47 +353,40 @@ export class InventoryService {
       total,
       totalPages: Math.ceil(total / pageSize),
       company,
-      items: products.map((product) => ({
-        productId: product.id,
-        name: product.name,
-        reference: product.reference,
-        description: product.description,
-        category: product.category.name,
-        categorySlug: product.category.name,
-        brand: product.brand.name,
-        type: product.productType?.name ?? null,
-        model: product.productModel?.name ?? null,
-        imageUrl: product.imageUrl,
-        variants: product.variants.map((variant) => ({
-          id: variant.id,
-          size: variant.size.name,
-          type: product.productType?.name ?? null,
-          itemNo: variant.itemNo,
-          sku: variant.sku,
-          salePrice: Number(variant.salePrice),
-          stock: variant.stock,
-          imageUrl: variant.imageUrl || product.imageUrl,
-          status: variant.status,
-        })),
-      })),
+      items: products.map((product) => {
+        const colorIds = new Set(product.variants.map((variant) => variant.colorId));
+
+        return {
+          productId: product.id,
+          name: this.buildStyleTitle(
+            product.brand.name,
+            product.productModel?.name ?? null,
+            product.reference,
+          ),
+          reference: product.reference,
+          description: product.description,
+          category: product.category.name,
+          categorySlug: product.category.name,
+          brand: product.brand.name,
+          model: product.productModel?.name ?? null,
+          imageUrl: this.resolvePublicProductImage(product, product.variants),
+          colorCount: colorIds.size,
+          sizeCount: new Set(product.variants.map((variant) => variant.sizeId)).size,
+          variants: product.variants.map((variant) => ({
+            id: variant.id,
+            size: variant.size.name,
+            color: variant.color.name,
+            colorId: variant.colorId,
+            itemNo: variant.itemNo,
+            sku: variant.sku,
+            salePrice: Number(variant.salePrice),
+            stock: variant.stock,
+            imageUrl: this.resolveVariantImage(variant, product),
+            status: variant.status,
+          })),
+        };
+      }),
     };
-  }
-
-  private buildStyleKey(product: {
-    categoryId: string;
-    brandId: string;
-    productModelId: string | null;
-    reference: string;
-  }) {
-    if (product.productModelId) {
-      return `${product.categoryId}:${product.brandId}:${product.productModelId}`;
-    }
-
-    const baseReference = product.reference.includes('|')
-      ? product.reference.split('|')[0]
-      : product.reference;
-
-    return `${product.categoryId}:${product.brandId}:ref:${baseReference}`;
   }
 
   private buildStyleTitle(
@@ -407,6 +403,28 @@ export class InventoryService {
       : reference;
 
     return `${brand} ${baseReference}`.trim();
+  }
+
+  private resolvePublicProductImage(
+    product: { imageUrl: string | null },
+    variants: { imageUrl: string | null }[] = [],
+  ): string | null {
+    const productImage = product.imageUrl?.trim();
+    if (productImage) return productImage;
+
+    for (const variant of variants) {
+      const variantImage = variant.imageUrl?.trim();
+      if (variantImage) return variantImage;
+    }
+
+    return null;
+  }
+
+  private resolveVariantImage(
+    variant: { imageUrl: string | null },
+    product: { imageUrl: string | null },
+  ): string | null {
+    return variant.imageUrl?.trim() || product.imageUrl?.trim() || null;
   }
 
   private async listPublicProductsByStyle(
@@ -438,43 +456,27 @@ export class InventoryService {
         category: true,
         brand: true,
         productModel: true,
-        productType: true,
         variants: {
           where: variantWhere,
-          include: { size: true },
-          orderBy: [{ size: { sortOrder: 'asc' } }, { size: { name: 'asc' } }],
+          include: { size: true, color: true },
+          orderBy: [
+            { color: { name: 'asc' } },
+            { size: { sortOrder: 'asc' } },
+            { size: { name: 'asc' } },
+          ],
         },
       },
     });
 
-    type StyleAccumulator = {
-      styleKey: string;
-      styleTitle: string;
-      category: string;
-      categorySlug: string;
-      brand: string;
-      model: string | null;
-      defaultProductId: string;
-      imageUrl: string | null;
-      productIds: Set<string>;
-      sizes: Set<string>;
-      prices: number[];
-      hasStock: boolean;
-      latestCreatedAt: Date;
-      minPriceValue: number | null;
-    };
+    let styles = products
+      .filter((product) => product.variants.length > 0)
+      .map((product) => {
+        const prices = product.variants
+          .map((variant) => Number(variant.salePrice))
+          .filter((price) => price > 0);
 
-    const styleMap = new Map<string, StyleAccumulator>();
-
-    for (const product of products) {
-      if (!product.variants.length) continue;
-
-      const styleKey = this.buildStyleKey(product);
-      let acc = styleMap.get(styleKey);
-
-      if (!acc) {
-        acc = {
-          styleKey,
+        return {
+          styleKey: product.id,
           styleTitle: this.buildStyleTitle(
             product.brand.name,
             product.productModel?.name ?? null,
@@ -485,58 +487,16 @@ export class InventoryService {
           brand: product.brand.name,
           model: product.productModel?.name ?? null,
           defaultProductId: product.id,
-          imageUrl: product.imageUrl,
-          productIds: new Set(),
-          sizes: new Set(),
-          prices: [],
-          hasStock: false,
+          imageUrl: this.resolvePublicProductImage(product, product.variants),
+          colorCount: new Set(product.variants.map((variant) => variant.colorId)).size,
+          sizeCount: new Set(product.variants.map((variant) => variant.sizeId)).size,
+          minPrice: prices.length ? Math.min(...prices) : 0,
+          maxPrice: prices.length ? Math.max(...prices) : 0,
+          hasStock: product.variants.some((variant) => variant.stock > 0),
           latestCreatedAt: product.createdAt,
-          minPriceValue: null,
+          minPriceValue: prices.length ? Math.min(...prices) : null,
         };
-        styleMap.set(styleKey, acc);
-      }
-
-      acc.productIds.add(product.id);
-      if (!acc.imageUrl && product.imageUrl) {
-        acc.imageUrl = product.imageUrl;
-      }
-      if (product.createdAt > acc.latestCreatedAt) {
-        acc.latestCreatedAt = product.createdAt;
-      }
-
-      for (const variant of product.variants) {
-        acc.sizes.add(variant.size.name);
-        const price = Number(variant.salePrice);
-        if (price > 0) {
-          acc.prices.push(price);
-          acc.minPriceValue =
-            acc.minPriceValue === null
-              ? price
-              : Math.min(acc.minPriceValue, price);
-        }
-        if (variant.stock > 0) {
-          acc.hasStock = true;
-        }
-      }
-    }
-
-    let styles = Array.from(styleMap.values()).map((acc) => ({
-      styleKey: acc.styleKey,
-      styleTitle: acc.styleTitle,
-      category: acc.category,
-      categorySlug: acc.categorySlug,
-      brand: acc.brand,
-      model: acc.model,
-      defaultProductId: acc.defaultProductId,
-      imageUrl: acc.imageUrl,
-      colorCount: acc.productIds.size,
-      sizeCount: acc.sizes.size,
-      minPrice: acc.prices.length ? Math.min(...acc.prices) : 0,
-      maxPrice: acc.prices.length ? Math.max(...acc.prices) : 0,
-      hasStock: acc.hasStock,
-      latestCreatedAt: acc.latestCreatedAt,
-      minPriceValue: acc.minPriceValue,
-    }));
+      });
 
     styles.sort((a, b) => {
       switch (sortBy) {
@@ -660,12 +620,12 @@ export class InventoryService {
         orderBy: this.buildOrderBy(sortBy, sortOrder),
         include: {
           size: true,
+          color: true,
           product: {
             include: {
               category: true,
               sport: true,
               brand: true,
-              productType: true,
               productModel: true,
             },
           },
@@ -699,151 +659,109 @@ export class InventoryService {
       throw new NotFoundException('Company not found for external id');
     }
 
-    const anchorProduct = await this.prisma.product.findFirst({
+    const product = await this.prisma.product.findFirst({
       where: { id: productId, companyId: company.id, isActive: true },
       include: {
         category: true,
         brand: true,
-        productType: true,
         productModel: true,
-      },
-    });
-
-    if (!anchorProduct) {
-      throw new NotFoundException('Product not found');
-    }
-
-    const siblingWhere = this.buildStyleSiblingWhere(company.id, anchorProduct);
-
-    const siblingProducts = await this.prisma.product.findMany({
-      where: siblingWhere,
-      orderBy: [{ productType: { name: 'asc' } }, { name: 'asc' }],
-      include: {
-        productType: true,
         variants: {
           where: { status: ProductStatus.ACTIVE },
-          include: { size: true },
-          orderBy: [{ size: { sortOrder: 'asc' } }, { size: { name: 'asc' } }],
+          include: { size: true, color: true },
+          orderBy: [
+            { color: { name: 'asc' } },
+            { size: { sortOrder: 'asc' } },
+            { size: { name: 'asc' } },
+          ],
         },
       },
     });
 
-    const colors = siblingProducts
-      .filter((product) => product.variants.length > 0)
-      .map((product) => this.mapPublicColorProduct(product));
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
 
-    if (!colors.length) {
+    if (!product.variants.length) {
       throw new NotFoundException('Product has no active variants');
     }
 
-    const styleTitle = this.buildStyleTitle(
-      anchorProduct.brand.name,
-      anchorProduct.productModel?.name ?? null,
-      anchorProduct.reference,
-    );
+    const colorMap = new Map<
+      string,
+      {
+        colorId: string;
+        productId: string;
+        color: string;
+        reference: string;
+        imageUrl: string | null;
+        variants: {
+          id: string;
+          size: string;
+          itemNo: string | null;
+          sku: string | null;
+          salePrice: number;
+          stock: number;
+          imageUrl: string | null;
+          status: ProductStatus;
+        }[];
+      }
+    >();
 
-    return {
-      company,
-      productId: anchorProduct.id,
-      styleKey: this.buildStyleKey(anchorProduct),
-      styleTitle,
-      category: anchorProduct.category.name,
-      categorySlug: anchorProduct.category.name,
-      brand: anchorProduct.brand.name,
-      model: anchorProduct.productModel?.name ?? null,
-      colors,
-    };
-  }
+    for (const variant of product.variants) {
+      let entry = colorMap.get(variant.colorId);
 
-  private buildStyleSiblingWhere(
-    companyId: string,
-    product: {
-      categoryId: string;
-      brandId: string;
-      productModelId: string | null;
-      reference: string;
-    },
-  ): Prisma.ProductWhereInput {
-    if (product.productModelId) {
-      return {
-        companyId,
-        categoryId: product.categoryId,
-        brandId: product.brandId,
-        productModelId: product.productModelId,
-        isActive: true,
-      };
-    }
+      if (!entry) {
+        entry = {
+          colorId: variant.colorId,
+          productId: product.id,
+          color: variant.color.name,
+          reference: product.reference,
+          imageUrl: this.resolveVariantImage(variant, product),
+          variants: [],
+        };
+        colorMap.set(variant.colorId, entry);
+      }
 
-    const baseReference = product.reference.includes('|')
-      ? product.reference.split('|')[0]
-      : product.reference;
+      if (!entry.imageUrl) {
+        entry.imageUrl = this.resolveVariantImage(variant, product);
+      }
 
-    return {
-      companyId,
-      categoryId: product.categoryId,
-      brandId: product.brandId,
-      isActive: true,
-      OR: [
-        { reference: baseReference },
-        { reference: { startsWith: `${baseReference}|` } },
-      ],
-    };
-  }
-
-  private extractColorLabel(
-    product: {
-      name: string;
-      reference: string;
-      productType: { name: string } | null;
-    },
-  ) {
-    if (product.productType?.name) return product.productType.name;
-
-    const pipeIndex = product.reference.indexOf('|');
-    if (pipeIndex >= 0) {
-      return product.reference.slice(pipeIndex + 1);
-    }
-
-    return 'Estándar';
-  }
-
-  private mapPublicColorProduct(product: {
-    id: string;
-    name: string;
-    reference: string;
-    imageUrl: string | null;
-    productType: { name: string } | null;
-    variants: {
-      id: string;
-      itemNo: string | null;
-      sku: string | null;
-      salePrice: Prisma.Decimal;
-      stock: number;
-      imageUrl: string | null;
-      status: ProductStatus;
-      size: { name: string };
-    }[];
-  }) {
-    return {
-      productId: product.id,
-      color: this.extractColorLabel(product),
-      reference: product.reference,
-      imageUrl: product.imageUrl,
-      variants: product.variants.map((variant) => ({
+      entry.variants.push({
         id: variant.id,
         size: variant.size.name,
         itemNo: variant.itemNo,
         sku: variant.sku,
         salePrice: Number(variant.salePrice),
         stock: variant.stock,
-        imageUrl: variant.imageUrl || product.imageUrl,
+        imageUrl: this.resolveVariantImage(variant, product),
         status: variant.status,
-      })),
+      });
+    }
+
+    const colors = Array.from(colorMap.values()).sort((a, b) =>
+      a.color.localeCompare(b.color),
+    );
+
+    const styleTitle = this.buildStyleTitle(
+      product.brand.name,
+      product.productModel?.name ?? null,
+      product.reference,
+    );
+
+    return {
+      company,
+      productId: product.id,
+      styleKey: product.id,
+      styleTitle,
+      category: product.category.name,
+      categorySlug: product.category.name,
+      brand: product.brand.name,
+      model: product.productModel?.name ?? null,
+      colors,
     };
   }
 
   async getCatalogs(companyId: string) {
-    const [categories, sports, brands, types, models, sizes] =
+    const [categories, sports, brands, colors, models, sizes] =
       await this.prisma.$transaction([
         this.prisma.category.findMany({
           where: { companyId, isActive: true },
@@ -857,7 +775,7 @@ export class InventoryService {
           where: { companyId, isActive: true },
           orderBy: { name: 'asc' },
         }),
-        this.prisma.productType.findMany({
+        this.prisma.color.findMany({
           where: { companyId, isActive: true },
           orderBy: { name: 'asc' },
         }),
@@ -871,6 +789,6 @@ export class InventoryService {
         }),
       ]);
 
-    return { categories, sports, brands, types, models, sizes };
+    return { categories, sports, brands, colors, models, sizes };
   }
 }

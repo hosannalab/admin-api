@@ -156,7 +156,7 @@ async function main() {
     });
   }
 
-  const [category, sport, brand, type, model, size] = await Promise.all([
+  const [category, sport, brand, color, model, size] = await Promise.all([
     prisma.category.findFirstOrThrow({
       where: { companyId: company.id, name: 'JERSEY' },
     }),
@@ -170,7 +170,7 @@ async function main() {
       update: {},
       create: { companyId: company.id, name: 'NYM' },
     }),
-    prisma.productType.upsert({
+    prisma.color.upsert({
       where: { companyId_name: { companyId: company.id, name: 'LOCAL' } },
       update: {},
       create: { companyId: company.id, name: 'LOCAL' },
@@ -193,7 +193,7 @@ async function main() {
       },
     },
     update: {
-      name: 'JERSEY NYM JUAN SOTO LOCAL',
+      name: 'JERSEY NYM JUAN SOTO',
       categoryId: category.id,
       sportId: sport.id,
       brandId: brand.id,
@@ -202,11 +202,10 @@ async function main() {
     create: {
       companyId: company.id,
       reference: 'JUAN SOTO',
-      name: 'JERSEY NYM JUAN SOTO LOCAL',
+      name: 'JERSEY NYM JUAN SOTO',
       categoryId: category.id,
       sportId: sport.id,
       brandId: brand.id,
-      productTypeId: type.id,
       productModelId: model.id,
       isActive: true,
     },
@@ -214,9 +213,10 @@ async function main() {
 
   await prisma.productVariant.upsert({
     where: {
-      companyId_productId_sizeId: {
+      companyId_productId_colorId_sizeId: {
         companyId: company.id,
         productId: product.id,
+        colorId: color.id,
         sizeId: size.id,
       },
     },
@@ -229,6 +229,7 @@ async function main() {
     create: {
       companyId: company.id,
       productId: product.id,
+      colorId: color.id,
       sizeId: size.id,
       itemNo: '0001',
       salePrice: 1490,

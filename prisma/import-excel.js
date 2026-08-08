@@ -143,6 +143,8 @@ function sanitizeImageUrl(value) {
   const text = normalize(value);
   if (!text || text === '#VALUE!') return null;
   if (/^https?:\/\//i.test(text)) return text;
+  if (/^\/\//.test(text)) return `https:${text}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}\//i.test(text)) return `https://${text}`;
   return null;
 }
 
@@ -196,7 +198,9 @@ function mapRow(values, headerIndex) {
     variantType: get('variantType'),
     status: parseStatus(values[headerIndex.status]),
     salePrice: parsePrice(values[headerIndex.salePrice]),
-    imageUrl: sanitizeImageUrl(values[headerIndex.imageUrl]),
+    imageUrl:
+      sanitizeImageUrl(values[headerIndex.imageUrl]) ||
+      sanitizeImageUrl(values[headerIndex.image]),
     stock: parseStock(values[headerIndex.stock]),
   };
 }
@@ -215,11 +219,7 @@ function resolveStorefrontCategory(row) {
 }
 
 function buildProductReference(row) {
-  const reference = normalize(row.reference) || normalize(row.model) || row.itemNo;
-  const variantType = normalize(row.variantType);
-
-  if (!variantType) return reference;
-  return `${reference}|${variantType}`;
+  return normalize(row.reference) || normalize(row.model) || row.itemNo;
 }
 
 function buildProductName(row) {
@@ -383,13 +383,14 @@ async function importVariant(
     productImageUrl,
     row,
     sizeId,
+    colorId,
     updateExisting,
   },
 ) {
   const existing = await tx.productVariant.findFirst({
     where: {
       companyId,
-      OR: [{ itemNo: row.itemNo }, { productId, sizeId }],
+      OR: [{ itemNo: row.itemNo }, { productId, sizeId, colorId }],
     },
   });
 
@@ -417,6 +418,7 @@ async function importVariant(
     data: {
       companyId,
       productId,
+      colorId,
       sizeId,
       itemNo: row.itemNo,
       sku: row.itemNo,
@@ -488,16 +490,6 @@ async function importProductGroup(
       )
     : null;
 
-  const productType = group.variantType
-    ? await getOrCreateCatalog(
-        prisma,
-        caches.catalog,
-        'productType',
-        companyId,
-        group.variantType,
-      )
-    : null;
-
   const productModel = group.model
     ? await getOrCreateCatalog(
         prisma,
@@ -525,7 +517,6 @@ async function importProductGroup(
         categoryId: category.id,
         brandId: brand.id,
         sportId: sport?.id ?? null,
-        productTypeId: productType?.id ?? null,
         productModelId: productModel?.id ?? null,
         imageUrl: group.imageUrl,
         isActive: group.variants.some(
@@ -542,7 +533,6 @@ async function importProductGroup(
         categoryId: category.id,
         brandId: brand.id,
         sportId: sport?.id ?? null,
-        productTypeId: productType?.id ?? null,
         productModelId: productModel?.id ?? null,
         imageUrl: group.imageUrl ?? product.imageUrl,
         isActive:
@@ -577,6 +567,15 @@ async function importProductGroup(
       { sortOrder: sizeSortOrder },
     );
 
+    const colorName = normalize(row.variantType) || 'Estándar';
+    const color = await getOrCreateCatalog(
+      prisma,
+      caches.catalog,
+      'color',
+      companyId,
+      colorName,
+    );
+
     const result = await prisma.$transaction((tx) =>
       importVariant(tx, {
         companyId,
@@ -585,6 +584,7 @@ async function importProductGroup(
         productImageUrl: group.imageUrl,
         row,
         sizeId: size.id,
+        colorId: color.id,
         updateExisting,
       }),
     );

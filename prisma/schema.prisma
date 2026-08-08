@@ -46,7 +46,7 @@ model Company {
   sports      Sport[]
   brands      Brand[]
   sizes       Size[]
-  types       ProductType[]
+  colors      Color[]
   models      ProductModel[]
   products    Product[]
   variants    ProductVariant[]
@@ -188,18 +188,19 @@ model Size {
   @@index([companyId])
 }
 
-model ProductType {
-  id        String    @id @default(cuid())
+model Color {
+  id        String           @id @default(cuid())
   companyId String
   name      String
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  products  Product[]
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  variants  ProductVariant[]
 
   @@unique([companyId, name])
   @@index([companyId])
+  @@map("Color")
 }
 
 model ProductModel {
@@ -225,7 +226,6 @@ model Product {
   categoryId     String
   sportId        String?
   brandId        String
-  productTypeId  String?
   productModelId String?
   imageUrl       String?
   isActive       Boolean          @default(true)
@@ -235,7 +235,6 @@ model Product {
   category       Category         @relation(fields: [categoryId], references: [id])
   sport          Sport?           @relation(fields: [sportId], references: [id])
   brand          Brand            @relation(fields: [brandId], references: [id])
-  productType    ProductType?     @relation(fields: [productTypeId], references: [id])
   productModel   ProductModel?    @relation(fields: [productModelId], references: [id])
   variants       ProductVariant[]
 
@@ -244,7 +243,6 @@ model Product {
   @@index([categoryId])
   @@index([sportId])
   @@index([brandId])
-  @@index([productTypeId])
   @@index([productModelId])
 }
 
@@ -252,6 +250,7 @@ model ProductVariant {
   id        String        @id @default(cuid())
   companyId String
   productId String
+  colorId   String
   sizeId    String
   itemNo    String?
   sku       String?
@@ -263,13 +262,15 @@ model ProductVariant {
   updatedAt DateTime      @updatedAt
   company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  color     Color            @relation(fields: [colorId], references: [id])
   size      Size             @relation(fields: [sizeId], references: [id])
   movements StockMovement[]
 
-  @@unique([companyId, productId, sizeId])
+  @@unique([companyId, productId, colorId, sizeId])
   @@unique([companyId, itemNo])
   @@index([companyId])
   @@index([productId])
+  @@index([colorId])
   @@index([sizeId])
 }
 

@@ -120,6 +120,7 @@ export class StockService {
       itemNo: string | null;
       sku: string | null;
       size: { name: string };
+      color: { name: string };
       product: { id: string; name: string; reference: string };
     };
   }) {
@@ -146,7 +147,8 @@ export class StockService {
         id: movement.variant.id,
         itemNo: movement.variant.itemNo,
         sku: movement.variant.sku,
-        size: movement.variant.size.name,
+        size: movement.variant.size,
+        color: movement.variant.color,
         product: movement.variant.product,
       },
     };
@@ -173,6 +175,7 @@ export class StockService {
           variant: {
             include: {
               size: true,
+              color: true,
               product: { select: { id: true, name: true, reference: true } },
             },
           },
@@ -317,6 +320,7 @@ export class StockService {
           variant: {
             include: {
               size: true,
+              color: true,
               product: { select: { id: true, name: true, reference: true } },
             },
           },

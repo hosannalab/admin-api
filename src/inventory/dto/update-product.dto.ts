@@ -41,10 +41,6 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsString()
-  productTypeId?: string;
-
-  @IsOptional()
-  @IsString()
   productModelId?: string;
 
   @IsOptional()
@@ -58,11 +54,15 @@ export class UpdateProductDto {
 export class CreateVariantDto {
   @IsString()
   @IsNotEmpty()
+  colorId!: string;
+
+  @IsString()
+  @IsNotEmpty()
   sizeId!: string;
 
-  @IsOptional()
   @IsString()
-  itemNo?: string;
+  @IsNotEmpty()
+  itemNo!: string;
 
   @IsOptional()
   @IsString()
