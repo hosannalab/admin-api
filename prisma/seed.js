@@ -1,4 +1,3 @@
-const bcrypt = require('bcrypt');
 const path = require('path');
 
 require('dotenv').config({
@@ -15,22 +14,7 @@ const pool = new Pool({
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-const permissionSeeds = [
-  { key: 'inventory.read', description: 'Read inventory records' },
-  { key: 'inventory.create', description: 'Create inventory records' },
-  { key: 'inventory.update', description: 'Update inventory records' },
-  { key: 'inventory.inactivate', description: 'Inactivate inventory variants' },
-  { key: 'catalog.read', description: 'Read catalog records' },
-  { key: 'catalog.create', description: 'Create catalog records' },
-  { key: 'catalog.update', description: 'Update catalog records' },
-  { key: 'catalog.inactivate', description: 'Toggle catalog records' },
-  { key: 'product.read', description: 'Read products' },
-  { key: 'product.create', description: 'Create products' },
-  { key: 'product.update', description: 'Update products' },
-  { key: 'product.inactivate', description: 'Inactivate products' },
-  { key: 'stock.read', description: 'Read stock movements' },
-  { key: 'stock.move', description: 'Create stock movements' },
-];
+const { seedSpotDeportivoAuth } = require('./lib/seed-auth');
 
 const COMPANY_EXTERNAL_ID = 'cmp_spot_deportivo';
 
@@ -46,90 +30,7 @@ async function main() {
     },
   });
 
-  const passwordHash = await bcrypt.hash('Admin123*', 10);
-
-  const adminUser = await prisma.user.upsert({
-    where: { email: 'admin@spotdeportivo.local' },
-    update: { passwordHash, isActive: true },
-    create: {
-      email: 'admin@spotdeportivo.local',
-      firstName: 'System',
-      lastName: 'Admin',
-      passwordHash,
-      isActive: true,
-    },
-  });
-
-  await prisma.companyUser.upsert({
-    where: {
-      companyId_userId: {
-        companyId: company.id,
-        userId: adminUser.id,
-      },
-    },
-    update: { isActive: true },
-    create: {
-      companyId: company.id,
-      userId: adminUser.id,
-      isActive: true,
-    },
-  });
-
-  const role = await prisma.role.upsert({
-    where: {
-      companyId_name: {
-        companyId: company.id,
-        name: 'super_admin',
-      },
-    },
-    update: {},
-    create: {
-      companyId: company.id,
-      name: 'super_admin',
-      description: 'Full access role for administrators',
-      isSystem: true,
-    },
-  });
-
-  for (const permissionSeed of permissionSeeds) {
-    const permission = await prisma.permission.upsert({
-      where: { key: permissionSeed.key },
-      update: {
-        description: permissionSeed.description,
-      },
-      create: permissionSeed,
-    });
-
-    await prisma.rolePermission.upsert({
-      where: {
-        roleId_permissionId: {
-          roleId: role.id,
-          permissionId: permission.id,
-        },
-      },
-      update: {},
-      create: {
-        roleId: role.id,
-        permissionId: permission.id,
-      },
-    });
-  }
-
-  await prisma.userRole.upsert({
-    where: {
-      userId_roleId_companyId: {
-        userId: adminUser.id,
-        roleId: role.id,
-        companyId: company.id,
-      },
-    },
-    update: {},
-    create: {
-      userId: adminUser.id,
-      roleId: role.id,
-      companyId: company.id,
-    },
-  });
+  const users = await seedSpotDeportivoAuth(prisma, company);
 
   const categoryNames = ['JERSEY', 'HOMBRE', 'MUJER', 'CALZADO', 'ACCESORIOS', 'NUEVAS COLECCIONES'];
   const sizeNames = [
@@ -239,10 +140,12 @@ async function main() {
   });
 
   console.log('Seed completed successfully');
-  console.log('Login email: admin@spotdeportivo.local');
-  console.log('Login password: Admin123*');
   console.log('Company slug: spot-deportivo');
   console.log('Company external id:', COMPANY_EXTERNAL_ID);
+  console.log('Users:');
+  for (const user of users) {
+    console.log(`- ${user.email} (${user.role})`);
+  }
 }
 
 main()

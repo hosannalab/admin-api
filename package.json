@@ -23,6 +23,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
+    "prisma:seed-users": "node prisma/seed-users.js",
     "prisma:import-excel": "node prisma/import-excel.js",
     "prisma:clear-products": "node prisma/clear-products.js",
     "storage:setup-minio": "node scripts/setup-minio.js"
