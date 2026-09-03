@@ -7,6 +7,7 @@ import {
 import { Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockService } from '../stock/stock.service';
+import { StorageService } from '../storage/storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { CreateVariantDto, UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
@@ -17,6 +18,7 @@ export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stockService: StockService,
+    private readonly storageService: StorageService,
   ) {}
 
   private productInclude = {
@@ -50,7 +52,7 @@ export class ProductsService {
       id: product.id,
       reference: product.reference,
       name: product.name,
-      imageUrl: product.imageUrl,
+      imageUrl: this.storageService.toBrowserUrl(product.imageUrl),
       isActive: product.isActive,
       createdAt: product.createdAt,
       category: product.category,
@@ -128,8 +130,10 @@ export class ProductsService {
 
     return {
       ...product,
+      imageUrl: this.storageService.toBrowserUrl(product.imageUrl),
       variants: product.variants.map((variant) => ({
         ...variant,
+        imageUrl: this.storageService.toBrowserUrl(variant.imageUrl),
         salePrice: Number(variant.salePrice),
       })),
     };
@@ -352,6 +356,7 @@ export class ProductsService {
 
     return {
       ...updated,
+      imageUrl: this.storageService.toBrowserUrl(updated.imageUrl),
       salePrice: Number(updated.salePrice),
     };
   }
@@ -385,6 +390,7 @@ export class ProductsService {
 
     return {
       ...updated,
+      imageUrl: this.storageService.toBrowserUrl(updated.imageUrl),
       salePrice: Number(updated.salePrice),
     };
   }

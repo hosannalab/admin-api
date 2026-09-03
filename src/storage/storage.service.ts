@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   PutObjectCommand,
+  GetObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
@@ -20,6 +21,8 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
 ]);
 
+const OBJECT_KEY_PATTERN =
+  /^[\w-]+\/(products|variants)\/[\w-]+\/[A-Za-z0-9._-]+$/;
 const MAX_IMAGE_WIDTH = 1200;
 const WEBP_QUALITY = 80;
 
@@ -27,7 +30,7 @@ const WEBP_QUALITY = 80;
 export class StorageService {
   private readonly s3: S3Client | null;
   private readonly bucket: string;
-  private readonly publicBaseUrl: string;
+  private readonly mediaBaseUrl: string;
   private readonly enabled: boolean;
 
   constructor(
@@ -38,9 +41,7 @@ export class StorageService {
     const accessKeyId = this.config.get<string>('S3_ACCESS_KEY');
     const secretAccessKey = this.config.get<string>('S3_SECRET_KEY');
     this.bucket = this.config.get<string>('S3_BUCKET') ?? 'spot-deportivo';
-    this.publicBaseUrl = (
-      this.config.get<string>('S3_PUBLIC_URL') ?? 'http://localhost:9000/spot-deportivo'
-    ).replace(/\/$/, '');
+    this.mediaBaseUrl = this.resolveMediaBaseUrl();
 
     this.enabled = Boolean(endpoint && accessKeyId && secretAccessKey);
 
@@ -67,6 +68,70 @@ export class StorageService {
       throw new ServiceUnavailableException(
         'Almacenamiento S3 no configurado. Revisa S3_ENDPOINT, S3_ACCESS_KEY y S3_SECRET_KEY.',
       );
+    }
+  }
+
+  private resolveMediaBaseUrl() {
+    const apiPublicUrl = this.config.get<string>('API_PUBLIC_URL')?.replace(/\/$/, '');
+    if (apiPublicUrl) {
+      return `${apiPublicUrl}/public/media`;
+    }
+
+    const port = this.config.get<string>('PORT') ?? '3000';
+    return `http://localhost:${port}/public/media`;
+  }
+
+  isSafeObjectKey(key: string) {
+    return Boolean(key) && !key.includes('..') && OBJECT_KEY_PATTERN.test(key);
+  }
+
+  extractObjectKey(value: string) {
+    let pathname = value.trim();
+    if (!pathname) return null;
+
+    try {
+      if (/^https?:\/\//i.test(pathname)) {
+        pathname = new URL(pathname).pathname;
+      }
+    } catch {
+      return null;
+    }
+
+    const segments = pathname.split('/').filter(Boolean);
+    if (segments[0] === 'public' && segments[1] === 'media') {
+      segments.splice(0, 2);
+    }
+    if (segments[0] === this.bucket) {
+      segments.shift();
+    }
+
+    const key = segments.join('/');
+    return this.isSafeObjectKey(key) ? key : null;
+  }
+
+  toBrowserUrl(url?: string | null) {
+    const value = url?.trim();
+    if (!value) return null;
+
+    const key = this.extractObjectKey(value);
+    return key ? this.buildPublicUrl(key) : value;
+  }
+
+  async getObject(key: string) {
+    this.assertConfigured();
+    if (!this.isSafeObjectKey(key)) {
+      throw new NotFoundException('Imagen no encontrada.');
+    }
+
+    try {
+      return await this.s3!.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        }),
+      );
+    } catch {
+      throw new NotFoundException('Imagen no encontrada.');
     }
   }
 
@@ -115,7 +180,7 @@ export class StorageService {
   }
 
   buildPublicUrl(key: string) {
-    return `${this.publicBaseUrl}/${key}`;
+    return `${this.mediaBaseUrl}/${key}`;
   }
 
   async uploadBuffer(key: string, buffer: Buffer, contentType: string) {

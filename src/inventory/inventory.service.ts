@@ -4,12 +4,16 @@ import {
 } from '@nestjs/common';
 import { Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ListPublicProductsQueryDto } from './dto/list-public-products-query.dto';
 import { ListVariantsQueryDto } from './dto/list-variants-query.dto';
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   private buildPublicOrderBy(
     sortBy: ListPublicProductsQueryDto['sortBy'],
@@ -290,7 +294,9 @@ export class InventoryService {
         itemNo: item.itemNo,
         sku: item.sku,
         status: item.status,
-        imageUrl: item.imageUrl || item.product.imageUrl,
+        imageUrl: this.storageService.toBrowserUrl(
+          item.imageUrl || item.product.imageUrl,
+        ),
         salePrice: Number(item.salePrice),
         stock: item.stock,
         createdAt: item.createdAt,
@@ -409,11 +415,11 @@ export class InventoryService {
     product: { imageUrl: string | null },
     variants: { imageUrl: string | null }[] = [],
   ): string | null {
-    const productImage = product.imageUrl?.trim();
+    const productImage = this.storageService.toBrowserUrl(product.imageUrl);
     if (productImage) return productImage;
 
     for (const variant of variants) {
-      const variantImage = variant.imageUrl?.trim();
+      const variantImage = this.storageService.toBrowserUrl(variant.imageUrl);
       if (variantImage) return variantImage;
     }
 
@@ -424,7 +430,10 @@ export class InventoryService {
     variant: { imageUrl: string | null },
     product: { imageUrl: string | null },
   ): string | null {
-    return variant.imageUrl?.trim() || product.imageUrl?.trim() || null;
+    return (
+      this.storageService.toBrowserUrl(variant.imageUrl) ||
+      this.storageService.toBrowserUrl(product.imageUrl)
+    );
   }
 
   private async listPublicProductsByStyle(

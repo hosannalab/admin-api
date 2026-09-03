@@ -163,6 +163,8 @@ jobs:
             if [ -z "$S3_REGION_VALUE" ]; then S3_REGION_VALUE="us-east-1"; fi
             S3_PUBLIC_URL_VALUE="${{ vars.S3_PUBLIC_URL }}"
             if [ -z "$S3_PUBLIC_URL_VALUE" ]; then S3_PUBLIC_URL_VALUE="http://127.0.0.1:9000/$S3_BUCKET_VALUE"; fi
+            API_PUBLIC_URL_VALUE="${{ vars.API_PUBLIC_URL }}"
+            if [ -z "$API_PUBLIC_URL_VALUE" ]; then API_PUBLIC_URL_VALUE="https://$TRAEFIK_HOST"; fi
 
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
             docker network inspect proxy >/dev/null 2>&1 || docker network create proxy
@@ -185,6 +187,7 @@ jobs:
               -e S3_BUCKET="$S3_BUCKET_VALUE" \
               -e S3_REGION="$S3_REGION_VALUE" \
               -e S3_PUBLIC_URL="$S3_PUBLIC_URL_VALUE" \
+              -e API_PUBLIC_URL="$API_PUBLIC_URL_VALUE" \
               -l traefik.enable=true \
               -l "traefik.http.routers.spot-deportivo-api-prod.rule=Host(\`$TRAEFIK_HOST\`)" \
               -l traefik.http.routers.spot-deportivo-api-prod.entrypoints=websecure \
