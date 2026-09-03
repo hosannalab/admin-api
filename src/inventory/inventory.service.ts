@@ -294,9 +294,8 @@ export class InventoryService {
         itemNo: item.itemNo,
         sku: item.sku,
         status: item.status,
-        imageUrl: this.storageService.toBrowserUrl(
-          item.imageUrl || item.product.imageUrl,
-        ),
+        imageUrl: this.storageService.toBrowserUrl(item.imageUrl),
+        coverImageUrl: this.storageService.toBrowserUrl(item.product.imageUrl),
         salePrice: Number(item.salePrice),
         stock: item.stock,
         createdAt: item.createdAt,
@@ -375,7 +374,7 @@ export class InventoryService {
           categorySlug: product.category.name,
           brand: product.brand.name,
           model: product.productModel?.name ?? null,
-          imageUrl: this.resolvePublicProductImage(product, product.variants),
+          imageUrl: this.resolvePublicProductImage(product),
           colorCount: colorIds.size,
           sizeCount: new Set(product.variants.map((variant) => variant.sizeId)).size,
           variants: product.variants.map((variant) => ({
@@ -387,7 +386,7 @@ export class InventoryService {
             sku: variant.sku,
             salePrice: Number(variant.salePrice),
             stock: variant.stock,
-            imageUrl: this.resolveVariantImage(variant, product),
+            imageUrl: this.resolveVariantImage(variant),
             status: variant.status,
           })),
         };
@@ -411,29 +410,12 @@ export class InventoryService {
     return `${brand} ${baseReference}`.trim();
   }
 
-  private resolvePublicProductImage(
-    product: { imageUrl: string | null },
-    variants: { imageUrl: string | null }[] = [],
-  ): string | null {
-    const productImage = this.storageService.toBrowserUrl(product.imageUrl);
-    if (productImage) return productImage;
-
-    for (const variant of variants) {
-      const variantImage = this.storageService.toBrowserUrl(variant.imageUrl);
-      if (variantImage) return variantImage;
-    }
-
-    return null;
+  private resolvePublicProductImage(product: { imageUrl: string | null }) {
+    return this.storageService.toBrowserUrl(product.imageUrl);
   }
 
-  private resolveVariantImage(
-    variant: { imageUrl: string | null },
-    product: { imageUrl: string | null },
-  ): string | null {
-    return (
-      this.storageService.toBrowserUrl(variant.imageUrl) ||
-      this.storageService.toBrowserUrl(product.imageUrl)
-    );
+  private resolveVariantImage(variant: { imageUrl: string | null }) {
+    return this.storageService.toBrowserUrl(variant.imageUrl);
   }
 
   private async listPublicProductsByStyle(
@@ -496,7 +478,7 @@ export class InventoryService {
           brand: product.brand.name,
           model: product.productModel?.name ?? null,
           defaultProductId: product.id,
-          imageUrl: this.resolvePublicProductImage(product, product.variants),
+          imageUrl: this.resolvePublicProductImage(product),
           colorCount: new Set(product.variants.map((variant) => variant.colorId)).size,
           sizeCount: new Set(product.variants.map((variant) => variant.sizeId)).size,
           minPrice: prices.length ? Math.min(...prices) : 0,
@@ -724,14 +706,14 @@ export class InventoryService {
           productId: product.id,
           color: variant.color.name,
           reference: product.reference,
-          imageUrl: this.resolveVariantImage(variant, product),
+          imageUrl: this.resolveVariantImage(variant),
           variants: [],
         };
         colorMap.set(variant.colorId, entry);
       }
 
       if (!entry.imageUrl) {
-        entry.imageUrl = this.resolveVariantImage(variant, product);
+        entry.imageUrl = this.resolveVariantImage(variant);
       }
 
       entry.variants.push({
@@ -741,7 +723,7 @@ export class InventoryService {
         sku: variant.sku,
         salePrice: Number(variant.salePrice),
         stock: variant.stock,
-        imageUrl: this.resolveVariantImage(variant, product),
+        imageUrl: this.resolveVariantImage(variant),
         status: variant.status,
       });
     }
@@ -761,6 +743,7 @@ export class InventoryService {
       productId: product.id,
       styleKey: product.id,
       styleTitle,
+      imageUrl: this.resolvePublicProductImage(product),
       category: product.category.name,
       categorySlug: product.category.name,
       brand: product.brand.name,

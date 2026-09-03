@@ -181,8 +181,6 @@ export class ProductsService {
           sku: dto.sku,
           salePrice: dto.salePrice,
           stock: dto.stock,
-          imageUrl: dto.imageUrl,
-          status: dto.status,
         });
       }
 
@@ -305,7 +303,7 @@ export class ProductsService {
           salePrice: dto.salePrice,
           stock: 0,
           status: dto.status ?? ProductStatus.ACTIVE,
-          imageUrl: dto.imageUrl ?? product.imageUrl,
+          imageUrl: dto.imageUrl ?? null,
         },
       });
 

@@ -380,7 +380,6 @@ async function importVariant(
     companyId,
     userId,
     productId,
-    productImageUrl,
     row,
     sizeId,
     colorId,
@@ -405,7 +404,7 @@ async function importVariant(
         itemNo: row.itemNo,
         salePrice: row.salePrice,
         status: row.status,
-        imageUrl: row.imageUrl || productImageUrl,
+        imageUrl: row.imageUrl,
       },
     });
 
@@ -425,7 +424,7 @@ async function importVariant(
       salePrice: row.salePrice,
       stock: 0,
       status: row.status,
-      imageUrl: row.imageUrl || productImageUrl,
+      imageUrl: row.imageUrl,
     },
   });
 
@@ -581,7 +580,6 @@ async function importProductGroup(
         companyId,
         userId,
         productId: product.id,
-        productImageUrl: group.imageUrl,
         row,
         sizeId: size.id,
         colorId: color.id,
