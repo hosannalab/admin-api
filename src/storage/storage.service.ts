@@ -48,12 +48,16 @@ export class StorageService {
       this.enabled && endpoint && accessKeyId && secretAccessKey
         ? new S3Client({
             endpoint,
-            region: this.config.get<string>('S3_REGION') ?? 'us-east-1',
+            region: this.config.get<string>('S3_REGION') ?? 'auto',
             credentials: {
               accessKeyId,
               secretAccessKey,
             },
-            forcePathStyle: true,
+            // MinIO needs path-style. Cloudflare R2 accepts it too.
+            forcePathStyle: this.config.get<string>('S3_FORCE_PATH_STYLE') !== 'false',
+            // AWS SDK v3 default CRC32 checksums break R2 PutObject.
+            requestChecksumCalculation: 'WHEN_REQUIRED',
+            responseChecksumValidation: 'WHEN_REQUIRED',
           })
         : null;
   }
@@ -61,7 +65,7 @@ export class StorageService {
   assertConfigured() {
     if (!this.enabled || !this.s3) {
       throw new ServiceUnavailableException(
-        'Almacenamiento S3/MinIO no configurado. Revisa S3_ENDPOINT, S3_ACCESS_KEY y S3_SECRET_KEY.',
+        'Almacenamiento S3 no configurado. Revisa S3_ENDPOINT, S3_ACCESS_KEY y S3_SECRET_KEY.',
       );
     }
   }
