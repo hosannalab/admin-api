@@ -1,13 +1,21 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
   Patch,
   Post,
   Query,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -16,12 +24,18 @@ import type { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { CreateVariantDto, UpdateProductDto } from './dto/update-product.dto';
+import { ProductImportService } from './product-import.service';
 import { ProductsService } from './products.service';
+
+const IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 @Controller('inventory/products')
 @UseGuards(JwtAuthGuard, RolesPermissionsGuard)
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly productImportService: ProductImportService,
+  ) {}
 
   @Get()
   @Permissions('product.read')
@@ -30,6 +44,39 @@ export class ProductsController {
     @Query() query: ListProductsQueryDto,
   ) {
     return this.productsService.listProducts(user.companyId, query);
+  }
+
+  @Get('import/template')
+  @Permissions('product.read')
+  async downloadImportTemplate(@CurrentUser() user: JwtPayload) {
+    const buffer = await this.productImportService.buildTemplate(user.companyId);
+    return new StreamableFile(buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: 'attachment; filename="productos-plantilla.xlsx"',
+    });
+  }
+
+  @Post('import')
+  @Permissions('product.create', 'product.update')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: IMPORT_MAX_FILE_SIZE },
+    }),
+  )
+  importProducts(
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile(
+      new ParseFilePipe({
+        fileIsRequired: true,
+        validators: [new MaxFileSizeValidator({ maxSize: IMPORT_MAX_FILE_SIZE })],
+        exceptionFactory: () =>
+          new BadRequestException('Debes adjuntar un archivo Excel de hasta 5 MB'),
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.productImportService.importFile(user.companyId, user.sub, file);
   }
 
   @Get(':id')

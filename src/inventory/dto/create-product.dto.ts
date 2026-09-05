@@ -13,9 +13,9 @@ import {
 } from 'class-validator';
 
 export class CreateProductDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  reference!: string;
+  reference?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -54,9 +54,8 @@ export class CreateProductDto {
   @IsNotEmpty()
   colorId?: string;
 
-  @ValidateIf((dto) => Boolean(dto.sizeId))
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   itemNo?: string;
 
   @ValidateIf((dto) => Boolean(dto.sizeId))

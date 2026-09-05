@@ -60,9 +60,9 @@ export class CreateVariantDto {
   @IsNotEmpty()
   sizeId!: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  itemNo!: string;
+  itemNo?: string;
 
   @IsOptional()
   @IsString()

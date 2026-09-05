@@ -12,6 +12,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { CreateVariantDto, UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { UpdateVariantDto } from './dto/update-variant.dto';
+import { allocateItemNumbers, allocateProductReferences } from './product-codes';
 
 @Injectable()
 export class ProductsService {
@@ -147,10 +148,14 @@ export class ProductsService {
     await this.ensureProductForeignKeys(companyId, dto);
 
     try {
+      const reference =
+        dto.reference?.trim() ||
+        (await allocateProductReferences(this.prisma, companyId, 1))[0];
+
       const product = await this.prisma.product.create({
         data: {
           companyId,
-          reference: dto.reference.trim(),
+          reference,
           name: dto.name.trim(),
           description: dto.description,
           categoryId: dto.categoryId,
@@ -165,19 +170,18 @@ export class ProductsService {
       if (dto.sizeId) {
         if (
           !dto.colorId ||
-          !dto.itemNo?.trim() ||
           dto.salePrice === undefined ||
           dto.stock === undefined
         ) {
           throw new BadRequestException(
-            'colorId, itemNo, salePrice and stock are required when creating a variant',
+            'colorId, salePrice and stock are required when creating a variant',
           );
         }
 
         await this.createVariantForProduct(companyId, userId, product.id, {
           colorId: dto.colorId,
           sizeId: dto.sizeId,
-          itemNo: dto.itemNo.trim(),
+          itemNo: dto.itemNo?.trim(),
           sku: dto.sku,
           salePrice: dto.salePrice,
           stock: dto.stock,
@@ -286,10 +290,9 @@ export class ProductsService {
       throw new BadRequestException('Invalid size or color for this company');
     }
 
-    const itemNo = dto.itemNo?.trim();
-    if (!itemNo) {
-      throw new BadRequestException('itemNo is required when creating a variant');
-    }
+    const itemNo =
+      dto.itemNo?.trim() ||
+      (await allocateItemNumbers(this.prisma, companyId, 1))[0];
 
     try {
       const variant = await this.prisma.productVariant.create({
