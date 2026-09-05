@@ -9,10 +9,12 @@ import {
   StockMovementType,
 } from '@prisma/client';
 import * as XLSX from 'xlsx';
+import { Workbook, type DataValidation, type Worksheet } from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { allocateItemNumbers, allocateProductReferences } from './product-codes';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const TEMPLATE_DATA_ROWS = 500;
 
 const PRODUCT_COLUMNS = [
   'Referencia',
@@ -29,8 +31,29 @@ const PRODUCT_COLUMNS = [
   'Precio venta',
   'Inventario',
   'Estatus',
-  'Imagen',
 ] as const;
+
+type CatalogMaps = {
+  categories: Map<string, { id: string; name: string }>;
+  brands: Map<string, { id: string; name: string }>;
+  colors: Map<string, { id: string; name: string }>;
+  sizes: Map<string, { id: string; name: string }>;
+  sports: Map<string, { id: string; name: string }>;
+  models: Map<string, { id: string; name: string }>;
+};
+
+const CATALOG_DROPDOWNS: Array<{
+  column: string;
+  sheet: string;
+  key: keyof CatalogMaps;
+}> = [
+  { column: 'D', sheet: 'Categorias', key: 'categories' },
+  { column: 'E', sheet: 'Marcas', key: 'brands' },
+  { column: 'F', sheet: 'Deportes', key: 'sports' },
+  { column: 'G', sheet: 'Modelos', key: 'models' },
+  { column: 'H', sheet: 'Colores', key: 'colors' },
+  { column: 'I', sheet: 'Tallas', key: 'sizes' },
+];
 
 const HEADER_ALIASES: Record<string, string[]> = {
   reference: ['referencia'],
@@ -47,16 +70,6 @@ const HEADER_ALIASES: Record<string, string[]> = {
   salePrice: ['precio venta', 'precio'],
   stock: ['inventario', 'stock'],
   status: ['estatus', 'estado'],
-  imageUrl: ['imagen', 'image'],
-};
-
-type CatalogMaps = {
-  categories: Map<string, { id: string; name: string }>;
-  brands: Map<string, { id: string; name: string }>;
-  colors: Map<string, { id: string; name: string }>;
-  sizes: Map<string, { id: string; name: string }>;
-  sports: Map<string, { id: string; name: string }>;
-  models: Map<string, { id: string; name: string }>;
 };
 
 type ParsedRow = {
@@ -75,7 +88,6 @@ type ParsedRow = {
   salePrice: number;
   stock: number;
   status: ProductStatus;
-  imageUrl: string | null;
 };
 
 type ImportError = { row: number; message: string };
@@ -95,41 +107,56 @@ export class ProductImportService {
 
   async buildTemplate(companyId: string): Promise<Buffer> {
     const catalogs = await this.loadCatalogs(companyId);
-    const workbook = XLSX.utils.book_new();
+    const workbook = new Workbook();
 
-    const instructions = [
-      ['Carga masiva de productos — Spot Deportivo Pro'],
-      [''],
-      ['1. Completa la hoja Productos. Cada fila es una variante (color + talla).'],
-      ['2. Varias filas con la misma Referencia (o el mismo Nombre + Categoria + Marca si dejas Referencia vacía) forman un solo producto.'],
-      ['3. Referencia y No se generan solos si los dejas vacíos (P-000001 y C-000001). Llénalos solo si quieres un código propio o actualizar un producto existente.'],
-      ['4. Categoria, Marca, Color y Talla son obligatorios y deben coincidir con las hojas de catálogo.'],
-      ['5. Deporte y Modelo son opcionales, pero si los llenas también deben existir en catálogo.'],
-      ['6. No se crean catálogos nuevos desde este Excel: si un valor no aparece, agrégalo primero en Inventario > Catálogos.'],
-      ['7. Estatus acepta ACTIVO o INACTIVO. Si lo dejas vacío, queda ACTIVO.'],
-      ['8. Imagen debe ser una URL http(s). Las fotos de archivo se suben en el detalle del producto.'],
-      ['9. Si la referencia o el No ya existen, se actualizan precio, stock y datos del producto.'],
+    const instructions = workbook.addWorksheet('Instrucciones');
+    const instructionLines = [
+      'Carga masiva de productos — Spot Deportivo Pro',
+      '',
+      '1. Completa la hoja Productos. Cada fila es una variante (color + talla).',
+      '2. Categoría, Marca, Color, Talla, Deporte y Modelo se eligen con la lista desplegable de cada celda.',
+      '3. Varias filas con la misma Referencia (o el mismo Nombre + Categoría + Marca si dejas Referencia vacía) forman un solo producto.',
+      '4. Referencia y No se generan solos si los dejas vacíos (P-000001 y C-000001).',
+      '5. Deporte y Modelo son opcionales. Categoría, Marca, Color y Talla son obligatorios.',
+      '6. No se crean catálogos nuevos desde este Excel: agrégalos primero en Inventario > Catálogos y vuelve a descargar la plantilla.',
+      '7. Estatus acepta ACTIVO o INACTIVO. Si lo dejas vacío, queda ACTIVO.',
+      '8. Las fotos se suben en el detalle del producto, no en el Excel.',
     ];
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(instructions),
-      'Instrucciones',
+    instructionLines.forEach((line, index) => {
+      instructions.getCell(index + 1, 1).value = line;
+    });
+    instructions.getColumn(1).width = 120;
+
+    const products = workbook.addWorksheet('Productos');
+    PRODUCT_COLUMNS.forEach((header, index) => {
+      const cell = products.getCell(1, index + 1);
+      cell.value = header;
+      cell.font = { bold: true };
+    });
+    products.getRow(1).height = 20;
+    [18, 28, 32, 18, 18, 16, 18, 16, 12, 14, 14, 14, 14, 12].forEach(
+      (width, index) => {
+        products.getColumn(index + 1).width = width;
+      },
     );
 
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([ [...PRODUCT_COLUMNS] ]),
-      'Productos',
-    );
+    for (const dropdown of CATALOG_DROPDOWNS) {
+      const names = Array.from(catalogs[dropdown.key].values()).map(
+        (item) => item.name,
+      );
+      this.writeCatalogSheet(workbook, dropdown.sheet, names);
+        this.applyListValidation(
+        products,
+        dropdown.column,
+        `${dropdown.sheet}!$A$2:$A$${Math.max(2, names.length + 1)}`,
+        names.length === 0,
+      );
+    }
 
-    this.appendCatalogSheet(workbook, 'Categorias', catalogs.categories);
-    this.appendCatalogSheet(workbook, 'Marcas', catalogs.brands);
-    this.appendCatalogSheet(workbook, 'Colores', catalogs.colors);
-    this.appendCatalogSheet(workbook, 'Tallas', catalogs.sizes);
-    this.appendCatalogSheet(workbook, 'Deportes', catalogs.sports);
-    this.appendCatalogSheet(workbook, 'Modelos', catalogs.models);
+    this.applyListValidation(products, 'N', '"ACTIVO,INACTIVO"', false);
 
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
   async importFile(
@@ -250,16 +277,45 @@ export class ProductImportService {
     return summary;
   }
 
-  private appendCatalogSheet(
-    workbook: XLSX.WorkBook,
+  private writeCatalogSheet(
+    workbook: Workbook,
     name: string,
-    items: Map<string, { name: string }>,
+    values: string[],
   ) {
-    const rows: string[][] = [['Nombre']];
-    for (const item of items.values()) {
-      rows.push([item.name]);
+    const sheet = workbook.addWorksheet(name);
+    sheet.getCell(1, 1).value = 'Nombre';
+    sheet.getCell(1, 1).font = { bold: true };
+    values.forEach((value, index) => {
+      sheet.getCell(index + 2, 1).value = value;
+    });
+    sheet.getColumn(1).width = 32;
+    sheet.state = 'hidden';
+  }
+
+  private applyListValidation(
+    sheet: Worksheet,
+    column: string,
+    formula: string,
+    emptyList: boolean,
+  ) {
+    if (emptyList) {
+      return;
     }
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+
+    const lastRow = TEMPLATE_DATA_ROWS + 1;
+    const validation: DataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [formula],
+      showErrorMessage: true,
+      errorStyle: 'error',
+      errorTitle: 'Valor inválido',
+      error: 'Selecciona un valor de la lista desplegable.',
+    };
+
+    for (let row = 2; row <= lastRow; row += 1) {
+      sheet.getCell(`${column}${row}`).dataValidation = validation;
+    }
   }
 
   private async loadCatalogs(companyId: string): Promise<CatalogMaps> {
@@ -385,7 +441,6 @@ export class ProductImportService {
     const itemNo = this.normalize(this.cell(raw, fieldIndex.itemNo));
     const skuValue = this.normalize(this.cell(raw, fieldIndex.sku));
     const statusValue = this.normalize(this.cell(raw, fieldIndex.status));
-    const imageValue = this.normalize(this.cell(raw, fieldIndex.imageUrl));
 
     if (!name) return { message: 'El nombre es obligatorio' };
     if (!categoryName) return { message: 'La categoría es obligatoria' };
@@ -446,11 +501,6 @@ export class ProductImportService {
       return { message: 'Estatus debe ser ACTIVO o INACTIVO' };
     }
 
-    const imageUrl = this.parseImageUrl(imageValue);
-    if (imageValue && !imageUrl) {
-      return { message: 'Imagen debe ser una URL http(s) válida' };
-    }
-
     return {
       excelRow,
       reference,
@@ -467,7 +517,6 @@ export class ProductImportService {
       salePrice,
       stock,
       status,
-      imageUrl,
     };
   }
 
@@ -558,8 +607,6 @@ export class ProductImportService {
             },
           });
 
-      const coverUrl =
-        group.find((row) => row.imageUrl)?.imageUrl ?? null;
       let createdProduct = false;
 
       if (!product) {
@@ -577,7 +624,6 @@ export class ProductImportService {
             brandId: first.brandId,
             sportId: first.sportId,
             productModelId: first.productModelId,
-            imageUrl: coverUrl,
           },
         });
       } else {
@@ -590,7 +636,6 @@ export class ProductImportService {
             brandId: first.brandId,
             sportId: first.sportId,
             productModelId: first.productModelId,
-            ...(coverUrl ? { imageUrl: coverUrl } : {}),
           },
         });
       }
@@ -677,7 +722,6 @@ export class ProductImportService {
           sku,
           salePrice: row.salePrice,
           status: row.status,
-          imageUrl: row.imageUrl ?? existing.imageUrl,
         },
       });
       await this.reconcileStock(tx, companyId, userId, existing.id, row.stock);
@@ -695,7 +739,6 @@ export class ProductImportService {
         salePrice: row.salePrice,
         stock: 0,
         status: row.status,
-        imageUrl: row.imageUrl,
       },
     });
 
@@ -811,16 +854,6 @@ export class ProductImportService {
     }
     if (key === 'INACTIVO' || key === 'INACTIVE') {
       return ProductStatus.INACTIVE;
-    }
-    return null;
-  }
-
-  private parseImageUrl(value: string): string | null {
-    if (!value) {
-      return null;
-    }
-    if (/^https?:\/\//i.test(value)) {
-      return value;
     }
     return null;
   }
