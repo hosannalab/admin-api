@@ -106,17 +106,21 @@ export class ProductImportService {
   constructor(private readonly prisma: PrismaService) {}
 
   async buildTemplate(companyId: string): Promise<Buffer> {
-    const catalogs = await this.loadCatalogs(companyId);
+    const [catalogs, existingRows] = await Promise.all([
+      this.loadCatalogs(companyId),
+      this.loadExistingProductRows(companyId),
+    ]);
     const workbook = new Workbook();
+    const dataRows = Math.max(TEMPLATE_DATA_ROWS, existingRows.length + 200);
 
     const instructions = workbook.addWorksheet('Instrucciones');
     const instructionLines = [
       'Carga masiva de productos — Spot Deportivo Pro',
       '',
-      '1. Completa la hoja Productos. Cada fila es una variante (color + talla).',
-      '2. Categoría, Marca, Color, Talla, Deporte y Modelo se eligen con la lista desplegable de cada celda.',
-      '3. Varias filas con la misma Referencia (o el mismo Nombre + Categoría + Marca si dejas Referencia vacía) forman un solo producto.',
-      '4. Referencia y No se generan solos si los dejas vacíos (P-000001 y C-000001).',
+      '1. La hoja Productos sale con el inventario actual: un producto por cada variante (color + talla).',
+      '2. Puedes editar filas, agregar nuevas o dejar Referencia/No vacíos en altas para que se generen solos.',
+      '3. Categoría, Marca, Color, Talla, Deporte y Modelo se eligen con la lista desplegable de cada celda.',
+      '4. Varias filas con la misma Referencia forman un solo producto.',
       '5. Deporte y Modelo son opcionales. Categoría, Marca, Color y Talla son obligatorios.',
       '6. No se crean catálogos nuevos desde este Excel: agrégalos primero en Inventario > Catálogos y vuelve a descargar la plantilla.',
       '7. Estatus acepta ACTIVO o INACTIVO. Si lo dejas vacío, queda ACTIVO.',
@@ -140,20 +144,39 @@ export class ProductImportService {
       },
     );
 
+    existingRows.forEach((row, index) => {
+      const excelRow = index + 2;
+      products.getCell(excelRow, 1).value = row.reference;
+      products.getCell(excelRow, 2).value = row.name;
+      products.getCell(excelRow, 3).value = row.description;
+      products.getCell(excelRow, 4).value = row.category;
+      products.getCell(excelRow, 5).value = row.brand;
+      products.getCell(excelRow, 6).value = row.sport;
+      products.getCell(excelRow, 7).value = row.model;
+      products.getCell(excelRow, 8).value = row.color;
+      products.getCell(excelRow, 9).value = row.size;
+      products.getCell(excelRow, 10).value = row.itemNo;
+      products.getCell(excelRow, 11).value = row.sku;
+      products.getCell(excelRow, 12).value = row.salePrice;
+      products.getCell(excelRow, 13).value = row.stock;
+      products.getCell(excelRow, 14).value = row.status;
+    });
+
     for (const dropdown of CATALOG_DROPDOWNS) {
       const names = Array.from(catalogs[dropdown.key].values()).map(
         (item) => item.name,
       );
       this.writeCatalogSheet(workbook, dropdown.sheet, names);
-        this.applyListValidation(
+      this.applyListValidation(
         products,
         dropdown.column,
         `${dropdown.sheet}!$A$2:$A$${Math.max(2, names.length + 1)}`,
         names.length === 0,
+        dataRows,
       );
     }
 
-    this.applyListValidation(products, 'N', '"ACTIVO,INACTIVO"', false);
+    this.applyListValidation(products, 'N', '"ACTIVO,INACTIVO"', false, dataRows);
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
@@ -208,6 +231,10 @@ export class ProductImportService {
       const excelRow = index + 1;
       const raw = matrix[index];
       if (!Array.isArray(raw) || this.isEmptyRow(raw)) {
+        continue;
+      }
+
+      if (this.isProductOnlyPlaceholder(raw, fieldIndex)) {
         continue;
       }
 
@@ -297,12 +324,13 @@ export class ProductImportService {
     column: string,
     formula: string,
     emptyList: boolean,
+    dataRows = TEMPLATE_DATA_ROWS,
   ) {
     if (emptyList) {
       return;
     }
 
-    const lastRow = TEMPLATE_DATA_ROWS + 1;
+    const lastRow = dataRows + 1;
     const validation: DataValidation = {
       type: 'list',
       allowBlank: true,
@@ -316,6 +344,94 @@ export class ProductImportService {
     for (let row = 2; row <= lastRow; row += 1) {
       sheet.getCell(`${column}${row}`).dataValidation = validation;
     }
+  }
+
+  private async loadExistingProductRows(companyId: string) {
+    const products = await this.prisma.product.findMany({
+      where: { companyId },
+      include: {
+        category: { select: { name: true } },
+        brand: { select: { name: true } },
+        sport: { select: { name: true } },
+        productModel: { select: { name: true } },
+        variants: {
+          include: {
+            color: { select: { name: true } },
+            size: { select: { name: true, sortOrder: true } },
+          },
+          orderBy: [{ createdAt: 'asc' }],
+        },
+      },
+      orderBy: [{ name: 'asc' }, { reference: 'asc' }],
+    });
+
+    const rows: Array<{
+      reference: string;
+      name: string;
+      description: string;
+      category: string;
+      brand: string;
+      sport: string;
+      model: string;
+      color: string;
+      size: string;
+      itemNo: string;
+      sku: string;
+      salePrice: number | '';
+      stock: number | '';
+      status: string;
+    }> = [];
+
+    for (const product of products) {
+      const variants = [...product.variants].sort((left, right) => {
+        const sizeOrder = left.size.sortOrder - right.size.sortOrder;
+        if (sizeOrder !== 0) {
+          return sizeOrder;
+        }
+        return left.color.name.localeCompare(right.color.name, 'es');
+      });
+
+      if (!variants.length) {
+        rows.push({
+          reference: product.reference,
+          name: product.name,
+          description: product.description || '',
+          category: product.category.name,
+          brand: product.brand.name,
+          sport: product.sport?.name || '',
+          model: product.productModel?.name || '',
+          color: '',
+          size: '',
+          itemNo: '',
+          sku: '',
+          salePrice: '',
+          stock: '',
+          status: '',
+        });
+        continue;
+      }
+
+      for (const variant of variants) {
+        rows.push({
+          reference: product.reference,
+          name: product.name,
+          description: product.description || '',
+          category: product.category.name,
+          brand: product.brand.name,
+          sport: product.sport?.name || '',
+          model: product.productModel?.name || '',
+          color: variant.color.name,
+          size: variant.size.name,
+          itemNo: variant.itemNo || '',
+          sku: variant.sku || '',
+          salePrice: Number(variant.salePrice),
+          stock: variant.stock,
+          status: variant.status === ProductStatus.ACTIVE ? 'ACTIVO' : 'INACTIVO',
+        });
+      }
+    }
+
+    return rows;
   }
 
   private async loadCatalogs(companyId: string): Promise<CatalogMaps> {
@@ -856,6 +972,22 @@ export class ProductImportService {
       return ProductStatus.INACTIVE;
     }
     return null;
+  }
+
+  private isProductOnlyPlaceholder(
+    row: unknown[],
+    fieldIndex: Record<string, number>,
+  ) {
+    const hasVariantData = [
+      fieldIndex.color,
+      fieldIndex.size,
+      fieldIndex.itemNo,
+      fieldIndex.sku,
+      fieldIndex.salePrice,
+      fieldIndex.stock,
+    ].some((index) => this.normalize(this.cell(row, index)) !== '');
+
+    return !hasVariantData;
   }
 
   private isEmptyRow(row: unknown[]) {
