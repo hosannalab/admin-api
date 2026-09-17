@@ -369,6 +369,7 @@ export class InventoryService {
         return {
           productId: product.id,
           name: this.buildStyleTitle(
+            product.name,
             product.brand.name,
             product.productModel?.name ?? null,
             product.reference,
@@ -400,10 +401,16 @@ export class InventoryService {
   }
 
   private buildStyleTitle(
+    name: string,
     brand: string,
     model: string | null,
     reference: string,
   ) {
+    const productName = name?.trim();
+    if (productName) {
+      return productName;
+    }
+
     if (model) {
       return `${brand} ${model}`.trim();
     }
@@ -527,6 +534,7 @@ export class InventoryService {
         styles.push({
           styleKey: `${product.id}:${colorId}`,
           styleTitle: this.buildStyleTitle(
+            product.name,
             product.brand.name,
             product.productModel?.name ?? null,
             product.reference,
@@ -823,6 +831,7 @@ export class InventoryService {
     );
 
     const styleTitle = this.buildStyleTitle(
+      product.name,
       product.brand.name,
       product.productModel?.name ?? null,
       product.reference,
